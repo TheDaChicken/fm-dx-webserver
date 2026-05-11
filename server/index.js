@@ -14,11 +14,12 @@ const pluginsWss = new WebSocket.Server({ noServer: true, perMessageDeflate: tru
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
-const client = new net.Socket();
-const { SerialPort } = require('serialport');
+const { SerialPort, ReadlineParser } = require('serialport');
 const audioServer = require('./stream/3las.server');
 const tunnel = require('./tunnel');
 const { createChatServer } = require('./chat');
+
+const { EventEmitter } = require('events');
 
 // File imports
 const helpers = require('./helpers');
@@ -28,57 +29,16 @@ const { logDebug, logError, logInfo, logWarn, logChat } = require('./console');
 const storage = require('./storage');
 const { serverConfig, configExists, configSave } = require('./server_config');
 const pluginsApi = require('./plugins_api');
+const plugins = require('./plugins');
 const pjson = require('../package.json');
 
-// Function to find server files based on the plugins listed in config
-function findServerFiles(plugins) {
-  let results = [];
-  plugins.forEach(plugin => {
-    // Remove .js extension if present
-    if (plugin.endsWith('.js')) {
-      plugin = plugin.slice(0, -3);
-    }
-	
-    const pluginPath = path.join(__dirname, '..', 'plugins', `${plugin}_server.js`);
-    if (fs.existsSync(pluginPath) && fs.statSync(pluginPath).isFile()) {
-      results.push(pluginPath);
-    }
-  });
-  return results;
-}
-
-// Start plugins with delay
-function startPluginsWithDelay(plugins, delay) {
-  plugins.forEach((pluginPath, index) => {
-    setTimeout(() => {
-      const pluginName = path.basename(pluginPath, '.js'); // Extract plugin name from path
-      logInfo(`-----------------------------------------------------------------`);
-      logInfo(`Plugin ${pluginName} loaded successfully!`);
-      require(pluginPath);
-    }, delay * index);
-  });
-
-  // Add final log line after all plugins are loaded
-  setTimeout(() => {
-    logInfo(`-----------------------------------------------------------------`);
-  }, delay * plugins.length);
-}
+const events = new EventEmitter();
 
 // Get all plugins from config and find corresponding server files
-const plugins = findServerFiles(serverConfig.plugins);
-
-// Start the first plugin after 3 seconds, then the rest with 3 seconds delay
-if (plugins.length > 0) {
-  setTimeout(() => {
-    startPluginsWithDelay(plugins, 3000); // Start plugins with 3 seconds interval
-  }, 3000); // Initial delay of 3 seconds for the first plugin
-}
-
 const terminalWidth = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 }).output.columns;
-
 
 console.log(`\x1b[32m
  _____ __  __       ______  __ __        __   _                                  
@@ -91,14 +51,13 @@ console.log('\x1b[32m\x1b[2mby Noobish @ \x1b[4mFMDX.org\x1b[0m');
 console.log("v" + pjson.version)
 console.log('\x1b[90m' + '─'.repeat(terminalWidth - 1) + '\x1b[0m');
 
-
 const chatWss = createChatServer(storage);
 // Start ffmpeg
 require('./stream/index');
 require('./plugins');
 
 let currentUsers = 0;
-let serialport;
+let client;
 let timeoutAntenna;
 
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -110,236 +69,190 @@ const sessionMiddleware = session({
 app.use(sessionMiddleware);
 app.use(bodyParser.json());
 
-connectToXdrd();
-connectToSerial();
+client = (serverConfig.xdrd.wirelessConnection ? createTCP(serverConfig.xdrd) : connectToSerial(serverConfig.xdrd))
 tunnel.connect();
 
+events.on("xdrd:line", function(line) {
+  dataHandler.handleData(wss, line, rdsWss);
+}); 
+
 // Serialport retry code when port is open but communication is lost (additional code in datahandler.js)
-dataHandler.state.isSerialportRetrying = false;
+// dataHandler.state.isSerialportRetrying = false;
 
-setInterval(() => {
-  if (!dataHandler.state.isSerialportAlive && serverConfig.xdrd.wirelessConnection === false) {
-    dataHandler.state.isSerialportAlive = true;
-    dataHandler.state.isSerialportRetrying = true;
-    if (serialport && serialport.isOpen) {
-      logWarn('Communication lost from ' + serverConfig.xdrd.comPort + ', force closing serialport.');
-      setTimeout(() => {
-        serialport.close((err) => {
-          if (err) {
-            logError('Error closing serialport: ', err.message);
-          }
-        });
-      }, 1000);
-    } else {
-      logWarn('Communication lost from ' + serverConfig.xdrd.comPort + '.');
-    }
+// setInterval(() => {
+//   if (!dataHandler.state.isSerialportAlive && serverConfig.xdrd.wirelessConnection === false) {
+//     dataHandler.state.isSerialportAlive = true;
+//     dataHandler.state.isSerialportRetrying = true;
+//     if (serialport && serialport.isOpen) {
+//       logWarn('Communication lost from ' + serverConfig.xdrd.comPort + ', force closing serialport.');
+//       setTimeout(() => {
+//         serialport.close((err) => {
+//           if (err) {
+//             logError('Error closing serialport: ', err.message);
+//           }
+//         });
+//       }, 1000);
+//     } else {
+//       logWarn('Communication lost from ' + serverConfig.xdrd.comPort + '.');
+//     }
+//   }
+// }, 2000);
+
+function onTefConnect(port) {
+  port.write('x\n');
+  port.write('Q0\n');
+  port.write('M0\n');
+  port.write(`Z${serverConfig.antennaStartup}\n`); // Antenna on startup
+
+  if (serverConfig.defaultFreq && serverConfig.enableDefaultFreq === true) {
+    port.write('T' + Math.round(serverConfig.defaultFreq * 1000) + '\n');
+    //dataHandler.initialData.freq = Number(serverConfig.defaultFreq).toFixed(3);
+    //dataHandler.dataToSend.freq = Number(serverConfig.defaultFreq).toFixed(3);
+  } /* else if (dataHandler.state.lastFrequencyAlive && dataHandler.state.isSerialportRetrying) { // Serialport retry code when port is open but communication is lost
+    port.write('T' + (dataHandler.state.lastFrequencyAlive * 1000) + '\n');
+  }*/ else {
+    port.write('T87500\n');
   }
-}, 2000);
+  //dataHandler.state.isSerialportRetrying = false;
 
-// Serial Connection
-function connectToSerial() {
-if (serverConfig.xdrd.wirelessConnection === false) {
-    
+  if (serverConfig.device === 'si47xx') {
+    port.write('A0\n');
+  }
+  port.write('F-1\n');
+  port.write('W0\n');
+  serverConfig.webserver.rdsMode ? port.write('D1\n') : port.write('D0\n');
+  // cEQ and iMS combinations
+  if (serverConfig.ceqStartup === "0" && serverConfig.imsStartup === "0") {
+    port.write("G00\n"); // Both Disabled
+  } else if (serverConfig.ceqStartup === "1" && serverConfig.imsStartup === "0") {
+    port.write(`G10\n`);
+  } else if (serverConfig.ceqStartup === "0" && serverConfig.imsStartup === "1") {
+    port.write(`G01\n`);
+  } else if (serverConfig.ceqStartup === "1" && serverConfig.imsStartup === "1") {
+    port.write("G11\n"); // Both Enabled
+  }
+  // Handle stereo mode
+  if (serverConfig.stereoStartup === "1") {
+    port.write("B1\n"); // Mono
+  }
+  serverConfig.audio.startupVolume 
+    ? port.write('Y' + (serverConfig.audio.startupVolume * 100).toFixed(0) + '\n') 
+    : port.write('Y100\n');
+}
+
+function createSerialPort(xdrd) {
   // Configure the SerialPort with DTR and RTS options
-  serialport = new SerialPort({
-    path: serverConfig.xdrd.comPort,
+  const client = new SerialPort({
+    path: xdrd.comPort,
     baudRate: 115200,
-    autoOpen: false, // Prevents automatic opening
     dtr: false, // Disable DTR
     rts: false  // Disable RTS
   });
 
-  // Open the port manually after configuring DTR and RTS
-  serialport.open((err) => {
-    if (err) {
-      logError('Error opening port: ' + err.message);
-      setTimeout(() => {
-          connectToSerial();
-      }, 5000);
+  client.on('connect', () => {
+    logInfo('Using serial port: ' + serverConfig.xdrd.comPort);
+    pluginsApi.setOutput(client);
+
+    setTimeout(() => {
+      onTefConnect(serialport);
+    }, 6000);
+  });
+
+  client.on('close', () => {
+    // reconnect after a certain period of time.
+    setTimeout(function () {
+      client.connect();
+    }, 2000)
+  });
+
+  return client;
+}
+
+function createTCP(xdrd) {
+  const client = new net.Socket();
+
+  tryConnect = () => {
+    authFlags = {
+      password: xdrd.xdrdPassword
+    };
+    client.connect(xdrd.xdrdPort, xdrd.xdrdIp);
+  };
+
+  tryConnect();
+
+  client.on('connect', () => {
+    logInfo('Connection to xdrd established successfully.');
+    pluginsApi.setOutput(client);
+    authFlags.receivedPassword = false;
+  });
+  client.on('end', () => {
+    logInfo('fart.');
+  });
+  client.on('close', () => {
+    logWarn('Attempting to reconnect.');
+    // reconnect after a certain period of time.
+    setTimeout(function () {
+      tryConnect();
+    }, 2000)
+  });
+
+  client.setTimeout(3000);
+  client.on('timeout', () => {
+    logWarn('xdrd connection has timed out.');
+    client.destroy();
+  });
+
+  client.on('error', (err) => {
+    switch (true) {
+      case err.message.includes("ECONNRESET"):
+        logError("Connection to xdrd lost.");
+        break;
+      case err.message.includes("ETIMEDOUT"):
+        logError("Connection to xdrd @ " + serverConfig.xdrd.xdrdIp + ":" + serverConfig.xdrd.xdrdPort + " timed out.");
+        break;
+      case err.message.includes("ECONNREFUSED"):
+        logError("Connection to xdrd @ " + serverConfig.xdrd.xdrdIp + ":" + serverConfig.xdrd.xdrdPort + " failed. Is xdrd running?");
+        break;
+      case err.message.includes("EINVAL"):
+        logError("Attempts to reconnect are failing repeatedly. Consider checking your settings or restarting xdrd.");
+        break;
+      default:
+        logError("Unhandled error: ", err.message);
+        break;
+    }
+  });
+
+  client.pipe(new ReadlineParser()).on('data', (line) => {
+    if (authFlags.receivedPassword === false) {
+      authFlags.receivedPassword = true;
+      helpers.authenticateWithXdrd(client, line.trim(), authFlags.password);
       return;
     }
-    
-    logInfo('Using serial port: ' + serverConfig.xdrd.comPort);
-    dataHandler.state.isSerialportAlive = true;
-    pluginsApi.setOutput(serialport);
 
-    setTimeout(() => {
-        serialport.write('x\n');
-    }, 3000);
-    
-    setTimeout(() => {
-      serialport.write('Q0\n');
-      serialport.write('M0\n');
-      serialport.write(`Z${serverConfig.antennaStartup}\n`); // Antenna on startup
-
-      if (serverConfig.defaultFreq && serverConfig.enableDefaultFreq === true) {
-        serialport.write('T' + Math.round(serverConfig.defaultFreq * 1000) + '\n');
-        dataHandler.initialData.freq = Number(serverConfig.defaultFreq).toFixed(3);
-        dataHandler.dataToSend.freq = Number(serverConfig.defaultFreq).toFixed(3);
-      } else if (dataHandler.state.lastFrequencyAlive && dataHandler.state.isSerialportRetrying) { // Serialport retry code when port is open but communication is lost
-        serialport.write('T' + (dataHandler.state.lastFrequencyAlive * 1000) + '\n');
-      } else {
-        serialport.write('T87500\n');
-      }
-      dataHandler.state.isSerialportRetrying = false;
-
-      if (serverConfig.device === 'si47xx') {
-        serialport.write('A0\n');
-      }
-      serialport.write('F-1\n');
-      serialport.write('W0\n');
-      serverConfig.webserver.rdsMode ? serialport.write('D1\n') : serialport.write('D0\n');
-      // cEQ and iMS combinations
-      if (serverConfig.ceqStartup === "0" && serverConfig.imsStartup === "0") {
-        serialport.write("G00\n"); // Both Disabled
-      } else if (serverConfig.ceqStartup === "1" && serverConfig.imsStartup === "0") {
-        serialport.write(`G10\n`);
-      } else if (serverConfig.ceqStartup === "0" && serverConfig.imsStartup === "1") {
-        serialport.write(`G01\n`);
-      } else if (serverConfig.ceqStartup === "1" && serverConfig.imsStartup === "1") {
-        serialport.write("G11\n"); // Both Enabled
-      }
-      // Handle stereo mode
-      if (serverConfig.stereoStartup === "1") {
-        serialport.write("B1\n"); // Mono
-      }
-      serverConfig.audio.startupVolume 
-        ? serialport.write('Y' + (serverConfig.audio.startupVolume * 100).toFixed(0) + '\n') 
-        : serialport.write('Y100\n');
-    }, 6000);
-    
-    serialport.on('data', (data) => {
-      helpers.resolveDataBuffer(data, wss, rdsWss);
-    });
-
-    serialport.on('error', (error) => {
-      logError(error.message);
-    });
-  });
-
-  // Handle port closure
-  serialport.on('close', () => {
-  pluginsApi.setOutput(null);
-    logWarn('Disconnected from ' + serverConfig.xdrd.comPort + '. Attempting to reconnect.');
-    setTimeout(() => {
-        dataHandler.state.isSerialportRetrying = true;
-        connectToSerial();
-    }, 5000);
-  });
-  return serialport;
-}
-}
-
-// xdrd connection
-let authFlags = {};
-
-function connectToXdrd() {
-  const { xdrd } = serverConfig;
-
-  if (xdrd.wirelessConnection && configExists()) {
-    client.connect(xdrd.xdrdPort, xdrd.xdrdIp, () => {
-      logInfo('Connection to xdrd established successfully.');
-      pluginsApi.setOutput(client);
-
-      authFlags = {
-        authMsg: false,
-        firstClient: false,
-        receivedSalt: '',
-        receivedPassword: false,
-        messageCount: 0,
-      };
-    });
-  }
-}
-
-client.on('data', (data) => {
-  const { xdrd } = serverConfig;
-  
-  helpers.resolveDataBuffer(data, wss, rdsWss);
-  if (authFlags.authMsg == true && authFlags.messageCount > 1) {
-    return;
-  }
-
-  authFlags.messageCount++;
-  const receivedData = data.toString();
-  const lines = receivedData.split('\n');
-
-  for (const line of lines) {
-    if (authFlags.receivedPassword === false) {
-      authFlags.receivedSalt = line.trim();
-      authFlags.receivedPassword = true;
-      helpers.authenticateWithXdrd(client, authFlags.receivedSalt, xdrd.xdrdPassword);
-    } else {
-      if (line.startsWith('a')) {
-        authFlags.authMsg = true;
+    switch (line.charAt(0))
+    {
+      case 'a': {
         logWarn('Authentication with xdrd failed. Is your password set correctly?');
-      } else if (line.startsWith('o1,')) {
-        authFlags.firstClient = true;
-      } else if (line.startsWith('T') && line.length <= 7) {
-        const freq = line.slice(1) / 1000;
-        dataHandler.dataToSend.freq = freq.toFixed(3);
-      } else if (line.startsWith('OK')) {
-        authFlags.authMsg = true;
-        logInfo('Authentication with xdrd successful.');
-      } else if (line.startsWith('G')) {
-        const value = line.substring(1);
-        dataHandler.initialData.eq = value.charAt(0);
-        dataHandler.dataToSend.eq = value.charAt(0);
-        dataHandler.initialData.ims = value.charAt(1);
-        dataHandler.dataToSend.ims = value.charAt(1);
-      } else if (line.startsWith('Z')) {
-        let modifiedLine = line.slice(1);
-        dataHandler.initialData.ant = modifiedLine;
-        dataHandler.dataToSend.ant = modifiedLine;
+        break;
       }
-
-      if (authFlags.authMsg === true && authFlags.firstClient === true) {
-        client.write('x\n');
-        client.write(serverConfig.defaultFreq && serverConfig.enableDefaultFreq === true ? 'T' + Math.round(serverConfig.defaultFreq * 1000) + '\n' : 'T87500\n');
-        dataHandler.initialData.freq = serverConfig.defaultFreq && serverConfig.enableDefaultFreq === true ? Number(serverConfig.defaultFreq).toFixed(3) : (87.5).toFixed(3);
-        dataHandler.dataToSend.freq = serverConfig.defaultFreq && serverConfig.enableDefaultFreq === true ? Number(serverConfig.defaultFreq).toFixed(3) : (87.5).toFixed(3);
-        if (serverConfig.device === 'si47xx') {
-          client.write('A0\n');
+      case 'o': {
+        const authStatus = line.charAt(1);
+        if (authStatus == '1')
+        {
+          logInfo('Authentication with xdrd successful.');
+          onTefConnect(client);
         }
-        client.write(serverConfig.audio.startupVolume ? 'Y' + (serverConfig.audio.startupVolume * 100).toFixed(0) + '\n' : 'Y100\n');
-        serverConfig.webserver.rdsMode ? client.write('D1\n') : client.write('D0\n');
-        return;
+        break;
+      }
+      default: {
+        events.emit("xdrd:line", line);
       }
     }
-  }
-});
+  });
 
-client.on('close', () => {
-  pluginsApi.setOutput(null);
-  if(serverConfig.autoShutdown === false) {
-    logWarn('Disconnected from xdrd. Attempting to reconnect.');
-    setTimeout(function () {
-      connectToXdrd();
-    }, 2000)
-  } else {
-    logWarn('Disconnected from xdrd.');
-  }
-});
+  return client;
+}
 
-client.on('error', (err) => {
-  switch (true) {
-    case err.message.includes("ECONNRESET"):
-      logError("Connection to xdrd lost. Reconnecting...");
-      break;
-    case err.message.includes("ETIMEDOUT"):
-      logError("Connection to xdrd @ " + serverConfig.xdrd.xdrdIp + ":" + serverConfig.xdrd.xdrdPort + " timed out.");
-      break;
-    case err.message.includes("ECONNREFUSED"):
-      logError("Connection to xdrd @ " + serverConfig.xdrd.xdrdIp + ":" + serverConfig.xdrd.xdrdPort + " failed. Is xdrd running?");
-      break;
-    case err.message.includes("EINVAL"):
-      logError("Attempts to reconnect are failing repeatedly. Consider checking your settings or restarting xdrd.");
-      break;
-    default:
-      logError("Unhandled error: ", err.message);
-      break;
-  }
-});
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '../web'));
@@ -369,7 +282,7 @@ setInterval(() => {
 }, 60 * 60 * 1000); // Run every hour
 
 wss.on('connection', (ws, request) => {
-    const output = serverConfig.xdrd.wirelessConnection ? client : serialport;
+    const output = client;
     let clientIp = request.headers['x-forwarded-for'] || request.connection.remoteAddress;
     const userCommandHistory = {};
     const normalizedClientIp = clientIp?.replace(/^::ffff:/, '');
@@ -735,5 +648,20 @@ helpers.checkIPv6Support((isIPv6Supported) => {
 });
 
 // Register server context for plugins
-pluginsApi.registerServerContext({ wss, pluginsWss, httpServer, serverConfig });
+pluginsApi.registerServerContext({ 
+  wss,
+  pluginsWss, 
+  httpServer, 
+  serverConfig
+});
+
+// Load enabled plugins.
+serverConfig.plugins.forEach(function(path) {
+  const metadata = plugins.resolvePluginMetadata(path);
+  if (metadata)
+  {
+    plugins.loadPlugin(metadata);
+  }
+});
+
 module.exports = { wss, pluginsWss, httpServer, serverConfig };

@@ -7,113 +7,74 @@
 const { EventEmitter } = require('events');
 const { logInfo, logWarn, logError } = require('./console');
 
+let server_ctx = null;
 let output = null;
-let wss = null;
-let pluginsWss = null;
-let httpServer = null;
-let serverConfig = null;
+let ctx = null;
 
-// ---- internal plugin event bus ----
+function registerServerContext(server_ctx /* FIXME: Fart */) {
+    ctx = {
+        server: server_ctx,
+        events: new EventEmitter(),
+    }
 
-const pluginEvents = new EventEmitter();
-// prevent accidental memory leak warnings
-pluginEvents.setMaxListeners(50);
-
-// ---- registration server side ----
-
-function registerServerContext(ctx) {
-    if (ctx.wss) wss = ctx.wss;
-    if (ctx.pluginsWss) pluginsWss = ctx.pluginsWss;
-    if (ctx.httpServer) httpServer = ctx.httpServer;
-    if (ctx.serverConfig) serverConfig = ctx.serverConfig;
+    // prevent possible memory leak warnings
+    ctx.events.setMaxListeners(50);
 }
 
-function setOutput(newOutput) {
-    output = newOutput;
+function setOutput(newSerial) {
+    output = newSerial;
 }
 
 function clearOutput() {
     output = null;
 }
 
-// ---- accessors plugin side ----
-
 function getWss() {
-    return wss;
+    return ctx.server.wss;
 }
 
 function getPluginsWss() {
-    return pluginsWss;
+    return ctx.server.pluginsWss;
 }
 
 function getHttpServer() {
-    return httpServer;
+    return ctx.server.httpServer;
 }
 
 function getServerConfig() {
-    return serverConfig;
+    return ctx.server.serverConfig;
 }
-
-// ---- privileged command path ----
-
-async function sendPrivilegedCommand(command, isPluginInternal = false) {
-    const maxWait = 10000;
-    const interval = 500;
-    let waited = 0;
-
-    while (!output && waited < maxWait) {
-        await new Promise(resolve => setTimeout(resolve, interval));
-        waited += interval;
-    }
-
-    if (!output) {
-        logError(`[Privileged Send] Timeout waiting for output (${command})`);
-        return false;
-    }
-
-    if (isPluginInternal) {
-        output.write(`${command}\n`);
-        //logInfo(`[Privileged Plugin] Command sent: ${command}`); // Debug
-        return true;
-    }
-
-    logWarn(`[Privileged Send] Rejected (not internal): ${command.slice(0, 64)}`);
-    return false;
-}
-
-// ---- plugin hook API ----
 
 function emitPluginEvent(event, payload, opts = {}) {
-    pluginEvents.emit(event, payload);
-
-    // Stop here unless option to broadcast to clients if true
-    if (opts.broadcast === false) return;
-
-    // Broadcast to connected plugin WebSocket clients if available
-    if (pluginsWss) {
-        const message = JSON.stringify({ type: event, value: payload });
-        pluginsWss.clients.forEach((client) => {
-            if (client.readyState === client.OPEN) {
-                try {
-                    // Send event to client
-                    client.send(message);
-                } catch (err) {
-                    logWarn(`[plugins_api] Failed to send ${event} to client: ${err.message}`);
-                }
-            }
-        });
-    }
+    ctx.events.emit(event, payload);
 }
 
 function onPluginEvent(event, handler) {
-    pluginEvents.on(event, handler);
+    ctx.events.on(event, handler);
 }
 
 function offPluginEvent(event, handler) {
-    pluginEvents.off(event, handler);
+    ctx.events.off(event, handler);
 }
 
-// ---- exports ----
+function emitSerialLine(serial_line) {
+    ctx.events.emit("xdrd:line", serial_line);
+}
+
+function emitSerialOpen() {
+    ctx.events.emit("xdrd:status", {state: "open"});
+}
+
+function emitSerialClosed() {
+    ctx.events.emit("xdrd:status", {state: "closed"});
+}
+
+// ---- TEF serial commands ----
+
+async function sendPrivilegedCommand(command) {
+
+    return false;
+}
 
 module.exports = {
     // server registration
@@ -133,5 +94,9 @@ module.exports = {
     // inter-plugin hooks
     emitPluginEvent,
     onPluginEvent,
-    offPluginEvent
+    offPluginEvent,
+
+    emitSerialLine,
+    emitSerialClosed,
+    emitSerialOpen
 };

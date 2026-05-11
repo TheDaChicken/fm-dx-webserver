@@ -1,7 +1,15 @@
 const fs = require('fs');
 const path = require('path');
-const consoleCmd = require('./console');
+const {logError, logInfo} = require('./console');
 const { serverConfig } = require('./server_config');
+
+const pluginsDir = path.join(__dirname, '../plugins');
+const webJsPluginsDir = path.join(__dirname, '../web/js/plugins');
+
+// Ensure the web/js/plugins directory exists
+if (!fs.existsSync(webJsPluginsDir)) {
+    fs.mkdirSync(webJsPluginsDir, { recursive: true });
+}
 
 // Function to read all .js files in a directory
 function readJSFiles(dir) {
@@ -10,106 +18,129 @@ function readJSFiles(dir) {
 }
 
 // Function to parse plugin config from a file
-function parsePluginConfig(filePath) {
-    const fileContent = fs.readFileSync(filePath, 'utf8');
-    const pluginConfig = {};
+function loadPluginMetadata(filePath) {
+    const metadata = {};
 
     // Assuming pluginConfig is a JavaScript object defined in each .js file
     try {
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+    
+        const pluginDir = path.dirname(filePath);
         const pluginExports = require(filePath);
-        Object.assign(pluginConfig, pluginExports.pluginConfig);
+        const manifest = pluginExports.pluginConfig;
 
-        // Check if pluginConfig has frontEndPath defined
-        if (pluginConfig.frontEndPath) {
-            const sourcePath = path.join(path.dirname(filePath), pluginConfig.frontEndPath);
-            const destinationDir = path.join(__dirname, '../web/js/plugins', path.dirname(pluginConfig.frontEndPath));
+        if (!manifest.frontEndFile)
+            manifest.frontEndFile = manifest.frontEndPath;
 
-            // Check if the source path exists
-            if (!fs.existsSync(sourcePath)) {
-                console.error(`Error: source path ${sourcePath} does not exist.`);
-                return pluginConfig;
+        if (!manifest.backEndFile)
+        {
+            const pluginNameShort = manifest.frontEndFile.slice(0, -3);
+            const backendFile = path.join(pluginDir, `${pluginNameShort}_server.js`);
+
+            if (fs.existsSync(backendFile) && fs.statSync(backendFile).isFile()) {
+                manifest.backEndFile = backendFile;
             }
+        }
 
-            // Check if the destination directory exists, if not, create it
-            if (!fs.existsSync(destinationDir)) {
-                fs.mkdirSync(destinationDir, { recursive: true }); // Create directory recursively
-            }
+        metadata.file = path.resolve(filePath);
+        metadata.name = manifest.name;
+        metadata.version = manifest.version ?? "unknown";
+        metadata.author = manifest.author ?? "";
 
-            const destinationFile = path.join(destinationDir, path.basename(sourcePath));
+        metadata.frontend = {};
+        metadata.backend = {};
 
-            // Platform-specific handling for symlinks/junctions
-            if (process.platform !== 'win32') {
-                // On Linux, create a symlink
-                try {
-                    if (fs.existsSync(destinationFile)) {
-                        fs.unlinkSync(destinationFile); // Remove existing file/symlink
-                    }
-                    fs.symlinkSync(sourcePath, destinationFile);
-                    setTimeout(function() {
-                        consoleCmd.logInfo(`Plugin ${pluginConfig.name} ${pluginConfig.version} initialized successfully.`);  
-                    }, 500)
-                } catch (err) {
-                    console.error(`Error creating symlink at ${destinationFile}: ${err.message}`);
-                }
-            }
-        } else {
-            console.error(`Error: frontEndPath is not defined in ${filePath}`);
+        metadata.frontend.file = manifest.frontEndFile;
+        if (metadata.frontend.file)
+        {
+            metadata.frontend.path = path.resolve(
+                pluginsDir,
+                metadata.frontend.file
+            );
+        }
+
+        metadata.backend.file = manifest.backEndFile;
+        if (metadata.backend.file)
+        {
+            metadata.backend.path = path.resolve(
+                pluginsDir,
+                metadata.backend.file
+            );
         }
     } catch (err) {
-        console.error(`Error parsing plugin config from ${filePath}: ${err.message}`);
+        logError(`Error parsing plugin config from ${filePath}: ${err.message}`);
+        return null;
     }
 
-    return pluginConfig;
+    return metadata;
 }
 
-// Main function to collect plugin configs from all .js files in the 'plugins' directory
-function collectPluginConfigs() {
-    const pluginsDir = path.join(__dirname, '../plugins');
-    const jsFiles = readJSFiles(pluginsDir);
+function loadPlugin(metadata) {
+    if (metadata.backend.path) {
+        require(metadata.backend.path);
+        logInfo(`Plugin Backend ${metadata.name} loaded successfully!`);
+    }
 
-    const pluginConfigs = [];
+    if (metadata.frontend.path)
+    {
+        createFrontEndLink(metadata.frontend);
+        logInfo(`Plugin Frontend ${metadata.name} added!`);
+    }
+}
+
+// Main function to create symlinks/junctions for frontend part of plugins
+function createFrontEndLink(frontend) {
+    const destinationDir = path.join(webJsPluginsDir, path.dirname(frontend.file));
+
+    if (!fs.existsSync(destinationDir)) {
+        fs.mkdirSync(destinationDir, { recursive: true }); // Create directory recursively
+    }
+
+    const destinationFile = path.join(destinationDir, path.basename(frontend.file));
+
+    try {
+        if (fs.lstatSync(destinationFile)) {
+            fs.rmSync(destinationFile); // Remove existing file/symlink
+        }
+        fs.symlinkSync(frontend.path, destinationFile);
+    } catch (err) {
+        console.error(`Error creating symlink at ${destinationFile}: ${err.message}`);
+    }
+}
+
+// Main function to collect plugin metadata from all .js files in the 'plugins' directory
+function loadPluginsMetadata() {
+    const jsFiles = readJSFiles(pluginsDir);
+    const pluginsMetadata = [];
+
     jsFiles.forEach(file => {
         const filePath = path.join(pluginsDir, file);
-        const config = parsePluginConfig(filePath);
-        if (Object.keys(config).length > 0) {
-            pluginConfigs.push(config);
+        const metadata = loadPluginMetadata(filePath);
+        if (metadata) {
+            pluginsMetadata.push(metadata);
         }
     });
 
-    return pluginConfigs;
+    return pluginsMetadata;
 }
 
-// Ensure the web/js/plugins directory exists
-const webJsPluginsDir = path.join(__dirname, '../web/js/plugins');
-if (!fs.existsSync(webJsPluginsDir)) {
-    fs.mkdirSync(webJsPluginsDir, { recursive: true });
-}
+function resolvePluginMetadata(path) {
+    let pluginMeta = null;
 
-// Main function to create symlinks/junctions for plugins
-function createLinks() {
-    const pluginsDir = path.join(__dirname, '../plugins');
-    const destinationPluginsDir = path.join(__dirname, '../web/js/plugins');
+    pluginsMetadata.forEach(function(metadata) {
+        if (metadata.frontend.file == path || metadata.file == path)
+            pluginMeta = metadata;
+    })
 
-    if (process.platform === 'win32') {
-        // On Windows, create a junction
-        try {
-            if (fs.existsSync(destinationPluginsDir)) {
-                fs.rmSync(destinationPluginsDir, { recursive: true });
-            }
-            fs.symlinkSync(pluginsDir, destinationPluginsDir, 'junction');
-            setTimeout(function() {
-                //consoleCmd.logInfo(`Plugin ${pluginConfig.name} ${pluginConfig.version} initialized successfully.`);  
-            }, 500)
-        } catch (err) {
-            console.error(`Error creating junction at ${destinationPluginsDir}: ${err.message}`);
-        }
-    }
+    return pluginMeta;
 }
 
 // Usage example
-const allPluginConfigs = collectPluginConfigs();
-createLinks();
+const pluginsMetadata = loadPluginsMetadata();
+//createLinks();
 
 module.exports = {
-    allPluginConfigs
+    pluginsMetadata,
+    loadPlugin,
+    resolvePluginMetadata
 };

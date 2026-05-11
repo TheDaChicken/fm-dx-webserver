@@ -15,7 +15,7 @@ const storage = require('./storage');
 const { logInfo, logDebug, logWarn, logError, logFfmpeg, logs } = require('./console');
 const dataHandler = require('./datahandler');
 const fmdxList = require('./fmdx_list');
-const { allPluginConfigs } = require('./plugins');
+const { pluginsMetadata  } = require('./plugins');
 
 // Endpoints
 router.get('/', (req, res) => {
@@ -76,8 +76,7 @@ router.get('/', (req, res) => {
                 device: serverConfig.device,
                 tunerProfiles,
                 si47xxAgcControl: !!serverConfig.si47xx?.agcControl,
-                noPlugins,
-                plugins: serverConfig.plugins,
+                plugins: (noPlugins ? [] : serverConfig.plugins),
                 fmlist_integration: serverConfig.extras.fmlistIntegration,
                 fmlist_adminOnly: serverConfig.extras.fmlistAdminOnly,
                 bwSwitch: serverConfig.bwSwitch
@@ -157,7 +156,7 @@ router.get('/wizard', (req, res) => {
               memoryHeap: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1) + ' MB',
               processUptime: formattedProcessUptime,
               consoleOutput: logs,
-              plugins: allPluginConfigs,
+              plugins: pluginsMetadata,
               enabledPlugins: updatedConfig.plugins,
               onlineUsers: dataHandler.dataToSend.users,
               connectedUsers: storage.connectedUsers,

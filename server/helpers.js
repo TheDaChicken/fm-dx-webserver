@@ -270,30 +270,6 @@ function formatUptime(uptimeInSeconds) {
   return `${days}d ${hours}h ${minutes}m`;
 }
 
-let incompleteDataBuffer = '';
-
-function resolveDataBuffer(data, wss, rdsWss) {
-  var receivedData = incompleteDataBuffer + data.toString();
-  const isIncomplete = (receivedData.slice(-1) != '\n');
-  
-  if (isIncomplete) {
-    const position = receivedData.lastIndexOf('\n');
-    if (position < 0) {
-      incompleteDataBuffer = receivedData;
-      receivedData = '';
-    } else {
-      incompleteDataBuffer = receivedData.slice(position + 1);
-      receivedData = receivedData.slice(0, position + 1);
-    }
-  } else {
-    incompleteDataBuffer = '';
-  }
-  
-  if (receivedData.length) {
-        dataHandler.handleData(wss, receivedData, rdsWss);
-    };
-}
-
 function kickClient(ipAddress) {
   // Find the entry in connectedClients associated with the provided IP address
   const targetClient = storage.connectedUsers.find(client => client.ip === ipAddress);
@@ -430,5 +406,5 @@ const escapeHtml = (unsafe) => {
 
 
 module.exports = {
-  authenticateWithXdrd, parseMarkdown, handleConnect, removeMarkdown, formatUptime, resolveDataBuffer, kickClient, checkIPv6Support, checkLatency, antispamProtection, escapeHtml
+  authenticateWithXdrd, parseMarkdown, handleConnect, removeMarkdown, formatUptime, kickClient, checkIPv6Support, checkLatency, antispamProtection, escapeHtml
 }

@@ -573,11 +573,9 @@
   <div id="toast-container" aria-live="polite"></div>
   <script src="js/websocket.js"></script>
   <script src="js/webserver.js"></script>
-  <% if (!noPlugins) { %>
   <% plugins?.forEach(function(plugin) { %>
   <script src="js/plugins/<%= plugin %>"></script>
   <% }); %>
-  <% } %>
 </body>
 
 </html>
