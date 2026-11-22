@@ -65,9 +65,9 @@ function getClientIps(req) {
   return raw.split(',').map(cleanIp).filter(Boolean);
 }
 
-// Who is connecting, from the request
 function getClient(req) {
-  const ip = getClientIps(req)[0];
+  const ips = getClientIps(req);
+  const ip = ips.at(-1);
   return {
     ip,
     // LAN/loopback, exempt from the per-IP connection limit
