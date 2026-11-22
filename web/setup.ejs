@@ -248,7 +248,13 @@
                         <%- include('_components', {component: 'text', cssClass: 'w-150 br-15', placeholder: '0.0.0.0', label: 'Webserver IP', id: 'webserver-webserverIp'}) %>
                         <%- include('_components', {component: 'text', cssClass: 'w-100 br-15', placeholder: '8080', label: 'Webserver port', id: 'webserver-webserverPort'}) %><br>
 
-                        <%- include('_components', {component: 'checkbox', cssClass: '', label: 'Under Proxy', 'id': 'webserver-underProxy'}) %>
+                        <%- include('_components', { component: 'dropdown', id: 'webserver-proxy-selector', inputId: 'webserver-underProxy', label: 'Proxy Config', cssClass: '', placeholder: 'None', 
+                            options: [
+                                { value: null, label: 'None' },
+                                { value: 'cloudflare', label: 'Cloudflare Origin IP (no proxy other than Cloudflare)' },
+                                { value: 'regular', label: 'Community tunnel.. or "Remove visitor IP headers" on Cloudflare' },
+                            ]
+                            }) %><br>
                         <p class="text-small">This is only REQUIRED if you are using your webserver under a proxy. Example: CloudFlare, Community tunnel etc. <br>If this isn't under a proxy, a user can craft a request with X-Forward-Header to bypass bans.</p>
                     </div>
                     <div class="panel-50 p-bottom-20">

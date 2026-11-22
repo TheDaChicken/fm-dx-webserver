@@ -59,15 +59,34 @@ function authenticateWithXdrd(client, salt, password) {
 
 const cleanIp = (ip) => String(ip || '').replace(/\s+/g, '').replace(/^::ffff:/, '').split('%')[0];
 
+function getSpecialHeader(req) {
+  const remoteAddress = req.socket?.remoteAddress;
+
+  if (serverConfig.webserver.underProxy == "regular") {
+    let forward = req.headers['x-forwarded-for'];
+    if(forward !== undefined) {
+      return forward;
+    }
+    
+    consoleCmd.logWarn(`Unable to get forwarded ip at ${remoteAddress}. Using remote IP.`);
+  } else if (serverConfig.webserver.underProxy == "cloudflare") { 
+    const originIp = req.headers['cf-connecting-ip'];
+    if (originIp !== undefined) {
+      return originIp;
+    }
+
+    consoleCmd.logWarn(`Unable to get Cloudflare Origin IP for request at ${remoteAddress}. Using remote IP.`);
+  }
+  return remoteAddress;
+}
+
 // All IPs from x-forwarded-for (or the socket), normalized
 function getClientIps(req) {
-  const raw = (serverConfig.webserver.underProxy ? req.headers['x-forwarded-for'] : undefined) || req.socket?.remoteAddress || '';
-  return raw.split(',').map(cleanIp).filter(Boolean);
+  return getSpecialHeader(req).split(',').map(cleanIp).filter(Boolean);
 }
 
 function getClient(req) {
-  const ips = getClientIps(req);
-  const ip = ips.at(-1);
+  const ip = getClientIps(req)[0];
   return {
     ip,
     // LAN/loopback, exempt from the per-IP connection limit
