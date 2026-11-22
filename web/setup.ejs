@@ -247,6 +247,9 @@
                         <p class="text-gray">Leave the IP at 0.0.0.0 unless you explicitly know you have to change it.<br>Don't enter your public IP here.</p>
                         <%- include('_components', {component: 'text', cssClass: 'w-150 br-15', placeholder: '0.0.0.0', label: 'Webserver IP', id: 'webserver-webserverIp'}) %>
                         <%- include('_components', {component: 'text', cssClass: 'w-100 br-15', placeholder: '8080', label: 'Webserver port', id: 'webserver-webserverPort'}) %><br>
+
+                        <%- include('_components', {component: 'checkbox', cssClass: '', label: 'Under Proxy', 'id': 'webserver-underProxy'}) %>
+                        <p class="text-small">This is only REQUIRED if you are using your webserver under a proxy. Example: CloudFlare, Community tunnel etc. <br>If this isn't under a proxy, a user can craft a request with X-Forward-Header to bypass bans.</p>
                     </div>
                     <div class="panel-50 p-bottom-20">
                             <h3>Design</h3>

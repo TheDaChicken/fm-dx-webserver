@@ -17,6 +17,7 @@ let serverConfig = {
   webserver: {
     webserverIp: "0.0.0.0",
     webserverPort: 8080,
+    underProxy: true,
     banlist: [],
     chatEnabled: true,
     tuningLimit: false,

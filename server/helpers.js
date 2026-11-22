@@ -61,7 +61,7 @@ const cleanIp = (ip) => String(ip || '').replace(/\s+/g, '').replace(/^::ffff:/,
 
 // All IPs from x-forwarded-for (or the socket), normalized
 function getClientIps(req) {
-  const raw = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
+  const raw = (serverConfig.webserver.underProxy ? req.headers['x-forwarded-for'] : undefined) || req.socket?.remoteAddress || '';
   return raw.split(',').map(cleanIp).filter(Boolean);
 }
 

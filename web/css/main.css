@@ -3,6 +3,7 @@
     --color-main: rgb(32, 34, 40);
     --color-main-bright: rgb(88, 219, 171);
     --color-text: rgb(255, 255, 255);
+    --color-bad: rgb(239, 83, 80);
     
     --color-1: color-mix(in srgb, var(--color-main) 95%, var(--color-main-bright)); /* 5% Brightness */
     --color-2: color-mix(in srgb, var(--color-main) 75%, var(--color-main-bright)); /* 25% Brightness */

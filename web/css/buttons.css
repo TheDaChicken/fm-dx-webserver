@@ -346,6 +346,10 @@ input[type="range"]::-moz-range-thumb {
     transform: translateX(-100%);
     background-color: var(--color-1);
 }
+#webserver-underProxy:checked + label {
+    background: var(--color-bad);
+    border: 2px solid var(--color-bad);
+}
 .switch label {
     cursor: pointer;
     min-width: 64px;
