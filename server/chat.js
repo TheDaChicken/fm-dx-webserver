@@ -29,7 +29,7 @@ function createChatServer(storage) {
         ws.on('pong', heartbeat);
         ws.on('error', (err) => logWarn('[Chat WebSocket] ' + err.message)); // unhandled 'error' crashes the process
 
-        const clientIp = helpers.getClientIp(request);
+        const {ip: clientIp} = helpers.getClient(request);
 
         ws.send(JSON.stringify({
             type: 'clientIp',

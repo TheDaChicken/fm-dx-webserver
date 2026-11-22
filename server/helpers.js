@@ -65,11 +65,9 @@ function getClientIps(req) {
   return raw.split(',').map(cleanIp).filter(Boolean);
 }
 
-const getClientIp = (req) => getClientIps(req)[0];
-
 // Who is connecting, from the request
 function getClient(req) {
-  const ip = getClientIp(req);
+  const ip = getClientIps(req)[0];
   return {
     ip,
     // LAN/loopback, exempt from the per-IP connection limit
@@ -379,5 +377,5 @@ const escapeHtml = (unsafe) => {
 
 
 module.exports = {
-  authenticateWithXdrd, parseMarkdown, handleConnect, removeMarkdown, formatUptime, resolveDataBuffer, kickClient, checkIPv6Support, checkLatency, createAntispam, getClient, getClientIp, isBanned, isBannedAS, escapeHtml
+  authenticateWithXdrd, parseMarkdown, handleConnect, removeMarkdown, formatUptime, resolveDataBuffer, kickClient, checkIPv6Support, checkLatency, createAntispam, getClient, isBanned, isBannedAS, escapeHtml
 }

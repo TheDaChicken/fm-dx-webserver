@@ -555,7 +555,8 @@ wss.on('connection', (ws, request) => {
 
 // Additional web socket for using plugins
 pluginsWss.on('connection', (ws, request) => { 
-    const antispam = helpers.createAntispam(ws, helpers.getClientIp(request), 10, 'data_plugins');
+    const {ip} = helpers.getClient(request);
+    const antispam = helpers.createAntispam(ws, ip, 10, 'data_plugins');
 
     ws.on('message', message => {
         const command = antispam(message);
